@@ -131,11 +131,10 @@
             "İkinci Forvet (CF)", "Santrfor (ST)"
         ];
 
+        // Önerileri azalttık
         const RECOMMENDATIONS = [
-            { value: "sign", label: "Kesinlikle Alınmalı", color: "bg-green-500" },
-            { value: "monitor", label: "Yakından Takip Edilmeli", color: "bg-yellow-500" },
-            { value: "pass", label: "İlgilenilmemeli", color: "bg-red-500" },
-            { value: "rotational", label: "Rotasyon İçin Uygun", color: "bg-blue-500" }
+            { value: "monitor", label: "Takip Ediliyor", color: "bg-blue-500" },
+            { value: "pass", label: "İlgilenilmiyor", color: "bg-slate-500" }
         ];
 
         const INITIAL_REPORT_STATE = {
@@ -206,49 +205,61 @@
             const [user, setUser] = useState(null);
             const [appId, setAppId] = useState('scoutmaster-pro-default');
             const [loadingData, setLoadingData] = useState(false);
+            const [dbError, setDbError] = useState(false); // Veritabanı çökme durumu
 
             // Initialize Firebase
             useEffect(() => {
                 if (!window.firebaseApp || !window.firebaseAuth || !window.firebaseDb) return;
 
+                // GITHUB PAGES İÇİN KENDİ FİREBASE BİLGİLERİNİ BURAYA GİRMELİSİN
                 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-                    // Fallback config if environment variable is not set. 
-                    // IN A REAL SCENARIO, THIS MUST BE REPLACED WITH ACTUAL CONFIG
-                    projectId: "demo-project",
+                    apiKey: "AIzaSyA1qtOWQTZW_Su6_aE6ADdo-I5M6aLVLF4",
+                    authDomain: "scoutmasterpro-bcdfb.firebaseapp.com",
+                    projectId: "scoutmasterpro-bcdfb",
+                    storageBucket: "scoutmasterpro-bcdfb.firebasestorage.app",
+                    messagingSenderId: "470737070128",
+                    appId: "1:470737070128:web:437b8ee0ec6ad376bb65f5",
+                    measurementId: "G-RQCSE9PJNY"
                 };
                 
-                const app = window.firebaseApp(firebaseConfig);
-                const fireAuth = window.firebaseAuth.getAuth(app);
-                const fireDb = window.firebaseDb.getFirestore(app);
-                
-                setAuth(fireAuth);
-                setDb(fireDb);
+                try {
+                    const app = window.firebaseApp(firebaseConfig);
+                    const fireAuth = window.firebaseAuth.getAuth(app);
+                    const fireDb = window.firebaseDb.getFirestore(app);
+                    
+                    setAuth(fireAuth);
+                    setDb(fireDb);
 
-                const aid = typeof __app_id !== 'undefined' ? __app_id : 'scoutmaster-pro-default';
-                setAppId(aid);
+                    const aid = typeof __app_id !== 'undefined' ? __app_id : 'scoutmaster-pro-default';
+                    setAppId(aid);
 
-                const initAuth = async () => {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await window.firebaseAuth.signInWithCustomToken(fireAuth, __initial_auth_token);
-                        } else {
-                            await window.firebaseAuth.signInAnonymously(fireAuth);
+                    const initAuth = async () => {
+                        try {
+                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                await window.firebaseAuth.signInWithCustomToken(fireAuth, __initial_auth_token);
+                            } else {
+                                await window.firebaseAuth.signInAnonymously(fireAuth);
+                            }
+                        } catch (error) {
+                            console.error("Firebase Auth Error:", error);
                         }
-                    } catch (error) {
-                        console.error("Firebase Auth Error:", error);
-                    }
-                };
-                initAuth();
+                    };
+                    initAuth();
 
-                const unsubscribe = window.firebaseAuth.onAuthStateChanged(fireAuth, (currentUser) => {
-                    setUser(currentUser);
-                });
+                    const unsubscribe = window.firebaseAuth.onAuthStateChanged(fireAuth, (currentUser) => {
+                        setUser(currentUser);
+                    });
 
-                return () => unsubscribe();
+                    return () => unsubscribe();
+                } catch (error) {
+                    console.error("Firebase Kurulum Hatası (Config Eksik):", error);
+                    setDbError(true); // Hata olduysa ekranın siyah olmasını engelleyip hata mesajı göstereceğiz
+                }
             }, []);
 
             // Load reports from Firestore when authenticated and user is ready
             useEffect(() => {
+                if (dbError) return; // DB hatası varsa yüklemeye çalışma
                 if (!user || !db || !isAuthenticated) return;
 
                 setLoadingData(true);
@@ -270,7 +281,7 @@
                 });
 
                 return () => unsubscribe();
-            }, [user, db, isAuthenticated, appId]);
+            }, [user, db, isAuthenticated, appId, dbError]);
 
             // Güvenli şifre kontrolü için SHA-256 Hash fonksiyonu (TUZLANMIŞ)
             const hashPassword = async (password) => {
@@ -319,12 +330,12 @@
 
             const handleSaveReport = async () => {
                 if (!currentReport.firstName || !currentReport.lastName) {
-                    alert("Lütfen oyuncunun adını ve soyadını giriniz."); // Note: Using custom alert UI would be better, keeping alert for simplicity as per user's original code style, though rules suggest avoiding it. I will keep it simple here.
+                    alert("Lütfen oyuncunun adını ve soyadını giriniz."); 
                     return;
                 }
 
                 if (!db || !user) {
-                    console.error("Database or User not initialized.");
+                    alert("Veritabanı bağlantısı kurulamadı. Firebase ayarlarınızı kontrol edin.");
                     return;
                 }
 
@@ -332,8 +343,6 @@
                     const reportsCollection = window.firebaseDb.collection(db, 'artifacts', appId, 'public', 'data', 'scout_reports');
                     
                     const reportDataToSave = { ...currentReport };
-                    // We don't save the id within the document data itself if it's auto-generated by Firestore,
-                    // but for updates we need to know it.
 
                     if (currentReport.id && typeof currentReport.id === 'string' && !currentReport.id.includes(Date.now().toString().substring(0,8))) {
                         // This looks like an existing Firestore ID, update it
@@ -348,7 +357,7 @@
                     setView('dashboard');
                 } catch (error) {
                     console.error("Error saving report: ", error);
-                    alert("Rapor kaydedilirken bir hata oluştu.");
+                    alert("Rapor kaydedilirken bir hata oluştu. Veritabanı izinlerinizi kontrol edin.");
                 }
             };
 
@@ -455,6 +464,24 @@
 
                 return (
                     <div className="max-w-6xl mx-auto p-6">
+                        {/* HATA VARSA GÖSTERİLECEK UYARI EKRANI */}
+                        {dbError && (
+                            <div className="bg-red-500/20 border border-red-500 text-red-100 p-6 rounded-xl mb-8 shadow-lg">
+                                <h3 className="font-bold text-xl mb-2 text-red-400">
+                                    <i className="fa-solid fa-triangle-exclamation mr-2"></i> Firebase Ayarları Eksik!
+                                </h3>
+                                <p className="text-slate-300 mb-3">
+                                    Sitenin çalışması ve verilerin kaydedilebilmesi için kendi <strong>Firebase Config</strong> ayarlarını koda eklemen gerekiyor. Şu anki geçersiz ayarlar uygulamanın siyah ekran vermesine sebep oluyordu.
+                                </p>
+                                <div className="bg-slate-900/50 p-4 rounded text-sm text-slate-400 font-mono">
+                                    1. firebase.google.com adresinden proje oluştur.<br/>
+                                    2. Web uygulaması ekleyip 'firebaseConfig' değişkenini kopyala.<br/>
+                                    3. Kodun içindeki 125. satır civarındaki yeri kendi bilgilerinle değiştir.<br/>
+                                    4. Firebase konsolundan Firestore Database'i "Test Modunda" başlat.
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex justify-between items-center mb-8">
                             <div>
                                 <h1 className="text-3xl font-bold text-white mb-2">
@@ -474,53 +501,32 @@
                             )}
                         </div>
 
-                        {loadingData ? (
+                        {loadingData && !dbError ? (
                             <div className="flex justify-center items-center h-64 text-primary">
                                 <i className="fa-solid fa-circle-notch fa-spin fa-3x"></i>
                             </div>
                         ) : (
                             <>
-                                {/* Stats / Overview Cards */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                                {/* Stats / Overview Cards - Gereksiz olanlar kaldırıldı */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
                                     <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
                                         <div className="bg-slate-700 p-3 rounded-lg mr-4 text-blue-400">
                                             <i className="fa-solid fa-file-lines fa-lg"></i>
                                         </div>
                                         <div>
-                                            <p className="text-sm text-slate-400">Toplam Rapor</p>
+                                            <p className="text-sm text-slate-400">Toplam Oyuncu Raporu</p>
                                             <p className="text-2xl font-bold">{reports.length}</p>
                                         </div>
                                     </div>
-                                    <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
-                                        <div className="bg-slate-700 p-3 rounded-lg mr-4 text-green-400">
-                                            <i className="fa-solid fa-check-double fa-lg"></i>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm text-slate-400">Alınmalı Önerisi</p>
-                                            <p className="text-2xl font-bold">
-                                                {reports.filter(r => r.recommendation === 'sign').length}
-                                            </p>
-                                        </div>
-                                    </div>
+                                    
                                     <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
                                         <div className="bg-slate-700 p-3 rounded-lg mr-4 text-yellow-400">
                                             <i className="fa-solid fa-eye fa-lg"></i>
                                         </div>
                                         <div>
-                                            <p className="text-sm text-slate-400">Takip Edilenler</p>
+                                            <p className="text-sm text-slate-400">Aktif Takip Edilenler</p>
                                             <p className="text-2xl font-bold">
                                                 {reports.filter(r => r.recommendation === 'monitor').length}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
-                                        <div className="bg-slate-700 p-3 rounded-lg mr-4 text-purple-400">
-                                            <i className="fa-solid fa-users-cog fa-lg"></i>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm text-slate-400">Rotasyon</p>
-                                            <p className="text-2xl font-bold">
-                                                {reports.filter(r => r.recommendation === 'rotational').length}
                                             </p>
                                         </div>
                                     </div>
@@ -570,7 +576,6 @@
                                                         <th className="p-4 font-medium border-b border-slate-700 text-right">İşlemler</th>
                                                     </tr>
                                                 </thead>
-                                                {}
                                                 <tbody>
                                                     {filteredReports.map(report => (
                                                         <tr key={report.id} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
@@ -771,7 +776,7 @@
                                                 </div>
                                             </div>
                                             
-                                            <div>
+                                            <div className="mb-3">
                                                 <label className="form-label">YouTube Video Linki (Özet/Highlights)</label>
                                                 <div className="flex">
                                                     <span className="inline-flex items-center px-3 text-sm text-red-400 bg-slate-700 border border-r-0 border-slate-600 rounded-l-md">
@@ -780,6 +785,14 @@
                                                     <input type="url" name="youtubeUrl" value={currentReport.youtubeUrl || ''} onChange={handleInputChange} className="form-input rounded-none rounded-r-md" placeholder="https://www.youtube.com/watch?v=..." />
                                                 </div>
                                                 <p className="text-xs text-slate-500 mt-1">Video doğrudan rapor içinde oynatılabilecektir.</p>
+                                            </div>
+
+                                            {/* Yeni Öneri Seçimi */}
+                                            <div className="mt-4 pt-4 border-t border-slate-700">
+                                                <label className="form-label text-emerald-400 font-semibold mb-2">Scout Kararı</label>
+                                                <select name="recommendation" value={currentReport.recommendation} onChange={handleInputChange} className="form-input">
+                                                    {RECOMMENDATIONS.map(rec => <option key={rec.value} value={rec.value}>{rec.label}</option>)}
+                                                </select>
                                             </div>
                                         </div>
                                     </div>
@@ -804,7 +817,6 @@
                             >
                                 <i className="fa-solid fa-arrow-left"></i>
                             </button>
-                            {}
                             <div className="flex space-x-3">
                                 {/* Sadece admin ise Düzenle butonunu göster */}
                                 {isAuthenticated && (

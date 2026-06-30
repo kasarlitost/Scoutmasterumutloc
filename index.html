@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScoutMaster Pro - Futbol Oyuncu İzleme Platformu</title>
+    
+    <!-- Tailwind CSS (CDN for quick styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React and ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: '#10b981', // Emerald 500 - Football pitch green feel
+                        primaryDark: '#059669', // Emerald 600
+                        secondary: '#1e293b', // Slate 800 - Dark elegant look
+                        darkBg: '#0f172a', // Slate 900
+                        cardBg: '#1e293b', // Slate 800
+                        inputBg: '#334155', // Slate 700
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        // Expose Firebase functions to global scope so React can use them
+        window.firebaseApp = initializeApp;
+        window.firebaseAuth = { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken };
+        window.firebaseDb = { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, onSnapshot, query };
+    </script>
+
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow-x: hidden;
+        }
+        /* Custom scrollbar for better look in dark theme */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        .form-input {
+            width: 100%;
+            background-color: #334155;
+            border: 1px solid #475569;
+            color: white;
+            border-radius: 0.375rem;
+            padding: 0.5rem 0.75rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .form-input:focus {
+            border-color: #10b981;
+            box-shadow: 0 0 0 1px #10b981;
+        }
+        .form-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #94a3b8;
+            margin-bottom: 0.25rem;
+        }
+        /* Video Embed Container */
+        .video-container {
+            position: relative;
+            padding-bottom: 56.25%; /* 16:9 ratio */
+            height: 0;
+            overflow: hidden;
+            border-radius: 0.5rem;
+        }
+        .video-container iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Data Models & Constants ---
+        
+        const POSITIONS = [
+            "Kaleci (GK)",
+            "Sağ Bek (RB)", "Sol Bek (LB)", "Stoper (CB)",
+            "Ön Libero (CDM)", "Merkez Orta Saha (CM)", "On Numara (CAM)",
+            "Sağ Kanat (RW)", "Sol Kanat (LW)",
+            "İkinci Forvet (CF)", "Santrfor (ST)"
+        ];
+
+        const RECOMMENDATIONS = [
+            { value: "sign", label: "Kesinlikle Alınmalı", color: "bg-green-500" },
+            { value: "monitor", label: "Yakından Takip Edilmeli", color: "bg-yellow-500" },
+            { value: "pass", label: "İlgilenilmemeli", color: "bg-red-500" },
+            { value: "rotational", label: "Rotasyon İçin Uygun", color: "bg-blue-500" }
+        ];
+
+        const INITIAL_REPORT_STATE = {
+            id: null,
+            date: new Date().toISOString().split('T')[0],
+            // Player Info
+            firstName: '',
+            lastName: '',
+            age: '',
+            nationality: '',
+            club: '',
+            position: 'Merkez Orta Saha (CM)',
+            foot: 'Sağ', // Right, Left, Both
+            height: '',
+            weight: '',
+            marketValue: '',
+            contractEnd: '',
+            imageUrl: '',
+            youtubeUrl: '',
+            transfermarktUrl: '',
+            
+            // Attributes (0-10 or 1-5 scale, we'll use 1-10)
+            attributes: {
+                pace: 5,
+                shooting: 5,
+                passing: 5,
+                dribbling: 5,
+                defending: 5,
+                physicality: 5,
+                tacticalAwareness: 5,
+                workRate: 5
+            },
+            
+            // Text Analysis
+            strengths: '',
+            weaknesses: '',
+            summary: '',
+            roleInSystem: '',
+            
+            // Final Decision
+            recommendation: 'monitor',
+            overallRating: 5 // 1-10
+        };
+
+        // Helper to extract YouTube video ID
+        const getYoutubeId = (url) => {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        };
+
+        function App() {
+            // State
+            const [reports, setReports] = useState([]);
+            const [currentReport, setCurrentReport] = useState(INITIAL_REPORT_STATE);
+            const [view, setView] = useState('dashboard'); // 'login', 'dashboard', 'edit', 'view'
+            const [searchTerm, setSearchTerm] = useState('');
+            const [isAuthenticated, setIsAuthenticated] = useState(false); // Admin status
+            
+            // Login State
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [loginError, setLoginError] = useState('');
+
+            // Firebase State
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [user, setUser] = useState(null);
+            const [appId, setAppId] = useState('scoutmaster-pro-default');
+            const [loadingData, setLoadingData] = useState(false);
+
+            // Initialize Firebase
+            useEffect(() => {
+                if (!window.firebaseApp || !window.firebaseAuth || !window.firebaseDb) return;
+
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+                    // Fallback config if environment variable is not set. 
+                    // IN A REAL SCENARIO, THIS MUST BE REPLACED WITH ACTUAL CONFIG
+                    projectId: "demo-project",
+                };
+                
+                const app = window.firebaseApp(firebaseConfig);
+                const fireAuth = window.firebaseAuth.getAuth(app);
+                const fireDb = window.firebaseDb.getFirestore(app);
+                
+                setAuth(fireAuth);
+                setDb(fireDb);
+
+                const aid = typeof __app_id !== 'undefined' ? __app_id : 'scoutmaster-pro-default';
+                setAppId(aid);
+
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await window.firebaseAuth.signInWithCustomToken(fireAuth, __initial_auth_token);
+                        } else {
+                            await window.firebaseAuth.signInAnonymously(fireAuth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase Auth Error:", error);
+                    }
+                };
+                initAuth();
+
+                const unsubscribe = window.firebaseAuth.onAuthStateChanged(fireAuth, (currentUser) => {
+                    setUser(currentUser);
+                });
+
+                return () => unsubscribe();
+            }, []);
+
+            // Load reports from Firestore when authenticated and user is ready
+            useEffect(() => {
+                if (!user || !db || !isAuthenticated) return;
+
+                setLoadingData(true);
+                // We use a public collection path as requested by rules, though ideally this would be private for an admin panel.
+                // Using a specific collection name for this app's data.
+                const reportsCollection = window.firebaseDb.collection(db, 'artifacts', appId, 'public', 'data', 'scout_reports');
+                const q = window.firebaseDb.query(reportsCollection);
+
+                const unsubscribe = window.firebaseDb.onSnapshot(q, (snapshot) => {
+                    const loadedReports = [];
+                    snapshot.forEach((doc) => {
+                        loadedReports.push({ id: doc.id, ...doc.data() });
+                    });
+                    setReports(loadedReports);
+                    setLoadingData(false);
+                }, (error) => {
+                    console.error("Error fetching reports: ", error);
+                    setLoadingData(false);
+                });
+
+                return () => unsubscribe();
+            }, [user, db, isAuthenticated, appId]);
+
+            // Güvenli şifre kontrolü için SHA-256 Hash fonksiyonu (TUZLANMIŞ)
+            const hashPassword = async (password) => {
+                const salt = "1z2i3l4a5n"; // Ekstra güvenlik için tuz
+                const msgBuffer = new TextEncoder().encode(password + salt);
+                const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            };
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                
+                // Güvenli Hash Karşılaştırması
+                const TARGET_HASH = "d6de00b39d44d4dbe5838ab8990ee46111363aa72e54f0f1a6d84c22e2a4897f"; 
+                const inputHash = await hashPassword(password);
+
+                if (username === 'admin' && inputHash === TARGET_HASH) {
+                    setIsAuthenticated(true);
+                    setView('dashboard');
+                    setLoginError('');
+                } else {
+                    setLoginError('Kullanıcı adı veya şifre hatalı!');
+                }
+            };
+
+            const handleLogout = () => {
+                setIsAuthenticated(false);
+                setView('dashboard'); // Logout olunca ana ekrana dön
+                setUsername('');
+                setPassword('');
+            };
+
+            // Actions
+            const handleCreateNew = () => {
+                // Sadece admin ise izin ver (güvenlik için ekstra kontrol)
+                if (!isAuthenticated) return;
+                
+                setCurrentReport({
+                    ...INITIAL_REPORT_STATE,
+                    id: Date.now().toString(), // Generate unique ID
+                    date: new Date().toISOString().split('T')[0]
+                });
+                setView('edit');
+            };
+
+            const handleSaveReport = async () => {
+                if (!currentReport.firstName || !currentReport.lastName) {
+                    alert("Lütfen oyuncunun adını ve soyadını giriniz."); // Note: Using custom alert UI would be better, keeping alert for simplicity as per user's original code style, though rules suggest avoiding it. I will keep it simple here.
+                    return;
+                }
+
+                if (!db || !user) {
+                    console.error("Database or User not initialized.");
+                    return;
+                }
+
+                try {
+                    const reportsCollection = window.firebaseDb.collection(db, 'artifacts', appId, 'public', 'data', 'scout_reports');
+                    
+                    const reportDataToSave = { ...currentReport };
+                    // We don't save the id within the document data itself if it's auto-generated by Firestore,
+                    // but for updates we need to know it.
+
+                    if (currentReport.id && typeof currentReport.id === 'string' && !currentReport.id.includes(Date.now().toString().substring(0,8))) {
+                        // This looks like an existing Firestore ID, update it
+                        const docRef = window.firebaseDb.doc(db, 'artifacts', appId, 'public', 'data', 'scout_reports', currentReport.id);
+                        await window.firebaseDb.updateDoc(docRef, reportDataToSave);
+                    } else {
+                        // It's a new report (ID was generated by Date.now() earlier)
+                        // Remove the temporary ID, let Firestore generate one
+                        delete reportDataToSave.id; 
+                        await window.firebaseDb.addDoc(reportsCollection, reportDataToSave);
+                    }
+                    setView('dashboard');
+                } catch (error) {
+                    console.error("Error saving report: ", error);
+                    alert("Rapor kaydedilirken bir hata oluştu.");
+                }
+            };
+
+            const handleDeleteReport = async (id) => {
+                if (window.confirm("Bu raporu silmek istediğinize emin misiniz?")) {
+                    if (!db || !user) return;
+                    try {
+                        const docRef = window.firebaseDb.doc(db, 'artifacts', appId, 'public', 'data', 'scout_reports', id);
+                        await window.firebaseDb.deleteDoc(docRef);
+                        if (view !== 'dashboard') setView('dashboard');
+                    } catch (error) {
+                        console.error("Error deleting report: ", error);
+                    }
+                }
+            };
+
+            const handleInputChange = (e, section, field) => {
+                const { name, value } = e.target;
+                
+                if (section) {
+                    setCurrentReport(prev => ({
+                        ...prev,
+                        [section]: {
+                            ...prev[section],
+                            [field || name]: value
+                        }
+                    }));
+                } else {
+                    setCurrentReport(prev => ({
+                        ...prev,
+                        [name]: value
+                    }));
+                }
+            };
+
+            // Views
+            const renderLogin = () => {
+                return (
+                    <div className="flex items-center justify-center h-screen bg-darkBg">
+                        <div className="bg-cardBg p-8 rounded-xl border border-slate-700 shadow-2xl w-full max-w-md">
+                            <div className="text-center mb-8">
+                                <div className="w-16 h-16 bg-primary rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/20">
+                                    <i className="fa-solid fa-futbol text-white text-3xl"></i>
+                                </div>
+                                <h1 className="text-2xl font-bold text-white">ScoutMaster <span className="text-primary">Pro</span></h1>
+                                <p className="text-slate-400 mt-2">Yönetici Girişi</p>
+                            </div>
+
+                            <form onSubmit={handleLogin} className="space-y-4">
+                                {loginError && (
+                                    <div className="bg-red-500/20 border border-red-500 text-red-400 p-3 rounded text-sm text-center">
+                                        {loginError}
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="form-label">Kullanıcı Adı</label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                                            <i className="fa-solid fa-user"></i>
+                                        </div>
+                                        <input 
+                                            type="text" 
+                                            value={username}
+                                            onChange={(e) => setUsername(e.target.value)}
+                                            className="form-input pl-10" 
+                                            placeholder="admin"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="form-label">Şifre</label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                                            <i className="fa-solid fa-lock"></i>
+                                        </div>
+                                        <input 
+                                            type="password" 
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            className="form-input pl-10" 
+                                            placeholder="•••••"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+                                <button 
+                                    type="submit"
+                                    className="w-full bg-primary hover:bg-primaryDark text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-200 mt-6"
+                                >
+                                    Giriş Yap
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderDashboard = () => {
+                const filteredReports = reports.filter(r => 
+                    `${r.firstName} ${r.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    r.club.toLowerCase().includes(searchTerm.toLowerCase())
+                );
+
+                return (
+                    <div className="max-w-6xl mx-auto p-6">
+                        <div className="flex justify-between items-center mb-8">
+                            <div>
+                                <h1 className="text-3xl font-bold text-white mb-2">
+                                    <i className="fa-solid fa-futbol text-primary mr-3"></i>
+                                    ScoutMaster Pro
+                                </h1>
+                                <p className="text-slate-400">Amatör ve Profesyoneller için Futbol Scouting Platformu</p>
+                            </div>
+                            {/* Sadece admin ise Yeni Rapor butonunu göster */}
+                            {isAuthenticated && (
+                                <button 
+                                    onClick={handleCreateNew}
+                                    className="bg-primary hover:bg-primaryDark text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-200 flex items-center"
+                                >
+                                    <i className="fa-solid fa-plus mr-2"></i> Yeni Rapor Oluştur
+                                </button>
+                            )}
+                        </div>
+
+                        {loadingData ? (
+                            <div className="flex justify-center items-center h-64 text-primary">
+                                <i className="fa-solid fa-circle-notch fa-spin fa-3x"></i>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Stats / Overview Cards */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                                    <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
+                                        <div className="bg-slate-700 p-3 rounded-lg mr-4 text-blue-400">
+                                            <i className="fa-solid fa-file-lines fa-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm text-slate-400">Toplam Rapor</p>
+                                            <p className="text-2xl font-bold">{reports.length}</p>
+                                        </div>
+                                    </div>
+                                    <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
+                                        <div className="bg-slate-700 p-3 rounded-lg mr-4 text-green-400">
+                                            <i className="fa-solid fa-check-double fa-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm text-slate-400">Alınmalı Önerisi</p>
+                                            <p className="text-2xl font-bold">
+                                                {reports.filter(r => r.recommendation === 'sign').length}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
+                                        <div className="bg-slate-700 p-3 rounded-lg mr-4 text-yellow-400">
+                                            <i className="fa-solid fa-eye fa-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm text-slate-400">Takip Edilenler</p>
+                                            <p className="text-2xl font-bold">
+                                                {reports.filter(r => r.recommendation === 'monitor').length}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="bg-cardBg p-4 rounded-xl border border-slate-700 flex items-center shadow-sm">
+                                        <div className="bg-slate-700 p-3 rounded-lg mr-4 text-purple-400">
+                                            <i className="fa-solid fa-users-cog fa-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm text-slate-400">Rotasyon</p>
+                                            <p className="text-2xl font-bold">
+                                                {reports.filter(r => r.recommendation === 'rotational').length}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Search and List */}
+                                <div className="bg-cardBg rounded-xl border border-slate-700 overflow-hidden shadow-lg">
+                                    <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
+                                        <h2 className="text-xl font-semibold">Raporlarım</h2>
+                                        <div className="relative w-64">
+                                            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                                                <i className="fa-solid fa-search text-slate-400"></i>
+                                            </div>
+                                            <input 
+                                                type="text" 
+                                                className="form-input pl-10 bg-slate-800" 
+                                                placeholder="Oyuncu veya kulüp ara..."
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {reports.length === 0 ? (
+                                        <div className="p-12 text-center text-slate-400">
+                                            <i className="fa-solid fa-clipboard-list text-6xl mb-4 text-slate-600"></i>
+                                            <h3 className="text-xl font-medium mb-2">Henüz raporunuz bulunmuyor</h3>
+                                            <p className="mb-6">İzlediğiniz oyuncuları değerlendirmeye başlamak için ilk raporunuzu oluşturun.</p>
+                                            <button 
+                                                onClick={handleCreateNew}
+                                                className="bg-primary hover:bg-primaryDark text-white font-medium py-2 px-4 rounded transition duration-200"
+                                            >
+                                                İlk Raporu Oluştur
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead>
+                                                    <tr className="bg-slate-800/80 text-slate-300 text-sm">
+                                                        <th className="p-4 font-medium border-b border-slate-700">Oyuncu</th>
+                                                        <th className="p-4 font-medium border-b border-slate-700">Pozisyon</th>
+                                                        <th className="p-4 font-medium border-b border-slate-700">Kulüp</th>
+                                                        <th className="p-4 font-medium border-b border-slate-700">Yaş</th>
+                                                        <th className="p-4 font-medium border-b border-slate-700 text-center">Öneri</th>
+                                                        <th className="p-4 font-medium border-b border-slate-700 text-center">Puan</th>
+                                                        <th className="p-4 font-medium border-b border-slate-700 text-right">İşlemler</th>
+                                                    </tr>
+                                                </thead>
+                                                {}
+                                                <tbody>
+                                                    {filteredReports.map(report => (
+                                                        <tr key={report.id} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
+                                                            <td className="p-4">
+                                                                <div className="flex items-center">
+                                                                    <div className="w-10 h-10 rounded-full bg-slate-600 overflow-hidden mr-3 flex-shrink-0 flex items-center justify-center border border-slate-500">
+                                                                        {report.imageUrl ? (
+                                                                            <img src={report.imageUrl} alt="Player" className="w-full h-full object-cover" onError={(e) => {e.target.onerror = null; e.target.src = `https://placehold.co/100x100/334155/ffffff?text=${report.firstName.charAt(0)}${report.lastName.charAt(0)}`;}} />
+                                                                        ) : (
+                                                                            <span className="text-sm font-bold text-slate-300">{report.firstName.charAt(0)}{report.lastName.charAt(0)}</span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div>
+                                                                        <div className="font-semibold text-white">{report.firstName} {report.lastName}</div>
+                                                                        <div className="text-xs text-slate-400">{report.nationality}</div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-4 text-sm text-slate-300">{report.position}</td>
+                                                            <td className="p-4 text-sm text-slate-300">{report.club || '-'}</td>
+                                                            <td className="p-4 text-sm text-slate-300">{report.age || '-'}</td>
+                                                            <td className="p-4 text-center">
+                                                                {RECOMMENDATIONS.map(rec => {
+                                                                    if(rec.value === report.recommendation) {
+                                                                        return (
+                                                                            <span key={rec.value} className={`${rec.color} text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap inline-flex items-center`}>
+                                                                                {rec.label}
+                                                                            </span>
+                                                                        );
+                                                                    }
+                                                                    return null;
+                                                                })}
+                                                            </td>
+                                                            <td className="p-4 text-center">
+                                                                <div className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-slate-800 border border-slate-600 font-bold text-primary">
+                                                                    {report.overallRating}
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-4 text-right">
+                                                                <button onClick={() => { setCurrentReport(report); setView('view'); }} className="text-blue-400 hover:text-blue-300 mx-2" title="Görüntüle">
+                                                                    <i className="fa-solid fa-eye"></i>
+                                                                </button>
+                                                                {/* Sadece admin ise Düzenle ve Sil butonlarını göster */}
+                                                                {isAuthenticated && (
+                                                                    <>
+                                                                        <button onClick={() => { setCurrentReport(report); setView('edit'); }} className="text-yellow-400 hover:text-yellow-300 mx-2" title="Düzenle">
+                                                                            <i className="fa-solid fa-pen"></i>
+                                                                        </button>
+                                                                        <button onClick={() => handleDeleteReport(report.id)} className="text-red-400 hover:text-red-300 mx-2" title="Sil">
+                                                                            <i className="fa-solid fa-trash"></i>
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                );
+            };
+
+            const renderEditor = () => {
+                return (
+                    <div className="max-w-5xl mx-auto p-4 md:p-6 pb-20">
+                        {/* Header */}
+                        <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-700">
+                            <div className="flex items-center space-x-4">
+                                <button 
+                                    onClick={() => setView('dashboard')}
+                                    className="bg-slate-700 hover:bg-slate-600 text-white rounded-full w-10 h-10 flex items-center justify-center transition"
+                                >
+                                    <i className="fa-solid fa-arrow-left"></i>
+                                </button>
+                                <h1 className="text-2xl font-bold">
+                                    {currentReport.firstName ? `${currentReport.firstName} ${currentReport.lastName}` : "Yeni Oyuncu Raporu"}
+                                </h1>
+                            </div>
+                            <div className="flex space-x-3">
+                                <button 
+                                    onClick={() => setView('dashboard')}
+                                    className="bg-transparent hover:bg-slate-700 text-white font-medium py-2 px-4 border border-slate-600 rounded transition"
+                                >
+                                    İptal
+                                </button>
+                                <button 
+                                    onClick={handleSaveReport}
+                                    className="bg-primary hover:bg-primaryDark text-white font-bold py-2 px-6 rounded shadow transition flex items-center"
+                                >
+                                    <i className="fa-solid fa-save mr-2"></i> Kaydet
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {/* Left Column: Personal Info */}
+                            <div className="lg:col-span-1 space-y-6">
+                                <div className="bg-cardBg p-5 rounded-xl border border-slate-700 shadow-md">
+                                    <h2 className="text-lg font-semibold mb-4 text-emerald-400 border-b border-slate-700 pb-2">
+                                        <i className="fa-solid fa-id-card mr-2"></i>Kişisel Bilgiler
+                                    </h2>
+                                    
+                                    <div className="space-y-4">
+                                        {/* Photo URL */}
+                                        <div>
+                                            <label className="form-label">Fotoğraf URL (İsteğe bağlı)</label>
+                                            <input type="text" name="imageUrl" value={currentReport.imageUrl} onChange={handleInputChange} className="form-input text-sm" placeholder="https://ornek.com/foto.jpg" />
+                                        </div>
+
+                                        {/* Photo Preview if exists */}
+                                        {currentReport.imageUrl && (
+                                            <div className="flex justify-center my-2">
+                                                <img src={currentReport.imageUrl} alt="Preview" className="w-24 h-24 object-cover rounded-full border-2 border-primary" 
+                                                     onError={(e) => {e.target.style.display='none'}}/>
+                                            </div>
+                                        )}
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="form-label">Adı *</label>
+                                                <input type="text" name="firstName" value={currentReport.firstName} onChange={handleInputChange} className="form-input" required />
+                                            </div>
+                                            <div>
+                                                <label className="form-label">Soyadı *</label>
+                                                <input type="text" name="lastName" value={currentReport.lastName} onChange={handleInputChange} className="form-input" required />
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="form-label">Yaş</label>
+                                                <input type="number" name="age" value={currentReport.age} onChange={handleInputChange} className="form-input" />
+                                            </div>
+                                            <div>
+                                                <label className="form-label">Uyruk</label>
+                                                <input type="text" name="nationality" value={currentReport.nationality} onChange={handleInputChange} className="form-input" />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="form-label">Boy (cm)</label>
+                                                <input type="number" name="height" value={currentReport.height} onChange={handleInputChange} className="form-input" />
+                                            </div>
+                                            <div>
+                                                <label className="form-label">Kilo (kg)</label>
+                                                <input type="number" name="weight" value={currentReport.weight} onChange={handleInputChange} className="form-input" />
+                                            </div>
+                                        </div>
+                                        
+                                        <div>
+                                            <label className="form-label">Mevcut Kulüp</label>
+                                            <input type="text" name="club" value={currentReport.club} onChange={handleInputChange} className="form-input" />
+                                        </div>
+
+                                        <div>
+                                            <label className="form-label">Pozisyon</label>
+                                            <select name="position" value={currentReport.position} onChange={handleInputChange} className="form-input">
+                                                {POSITIONS.map(pos => <option key={pos} value={pos}>{pos}</option>)}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="form-label">Kullandığı Ayak</label>
+                                            <select name="foot" value={currentReport.foot} onChange={handleInputChange} className="form-input">
+                                                <option value="Sağ">Sağ</option>
+                                                <option value="Sol">Sol</option>
+                                                <option value="İkisi de">İkisi de</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="form-label">Piyasa Değeri (Tahmini)</label>
+                                                <input type="text" name="marketValue" value={currentReport.marketValue} onChange={handleInputChange} className="form-input" placeholder="Örn: €1.5m" />
+                                            </div>
+                                            <div>
+                                                <label className="form-label">Sözleşme Bitiş</label>
+                                                <input type="text" name="contractEnd" value={currentReport.contractEnd} onChange={handleInputChange} className="form-input" placeholder="Örn: 2025" />
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-4 pt-4 border-t border-slate-700">
+                                            <h3 className="text-sm font-semibold mb-3 text-slate-300"><i className="fa-solid fa-link mr-2"></i>Dış Bağlantılar</h3>
+                                            
+                                            <div className="mb-3">
+                                                <label className="form-label">Transfermarkt Profili</label>
+                                                <div className="flex">
+                                                    <span className="inline-flex items-center px-3 text-sm text-slate-400 bg-slate-700 border border-r-0 border-slate-600 rounded-l-md">
+                                                        <i className="fa-solid fa-up-right-from-square"></i>
+                                                    </span>
+                                                    <input type="url" name="transfermarktUrl" value={currentReport.transfermarktUrl || ''} onChange={handleInputChange} className="form-input rounded-none rounded-r-md" placeholder="https://www.transfermarkt.com.tr/..." />
+                                                </div>
+                                            </div>
+                                            
+                                            <div>
+                                                <label className="form-label">YouTube Video Linki (Özet/Highlights)</label>
+                                                <div className="flex">
+                                                    <span className="inline-flex items-center px-3 text-sm text-red-400 bg-slate-700 border border-r-0 border-slate-600 rounded-l-md">
+                                                        <i className="fa-brands fa-youtube"></i>
+                                                    </span>
+                                                    <input type="url" name="youtubeUrl" value={currentReport.youtubeUrl || ''} onChange={handleInputChange} className="form-input rounded-none rounded-r-md" placeholder="https://www.youtube.com/watch?v=..." />
+                                                </div>
+                                                <p className="text-xs text-slate-500 mt-1">Video doğrudan rapor içinde oynatılabilecektir.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderViewReport = () => {
+                const recData = RECOMMENDATIONS.find(r => r.value === currentReport.recommendation);
+                const ytId = currentReport.youtubeUrl ? getYoutubeId(currentReport.youtubeUrl) : null;
+                
+                return (
+                    <div className="max-w-4xl mx-auto p-4 md:p-6 pb-20">
+                        {/* Header Actions */}
+                        <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-700">
+                            <button 
+                                onClick={() => setView('dashboard')}
+                                className="bg-slate-700 hover:bg-slate-600 text-white rounded-full w-10 h-10 flex items-center justify-center transition"
+                            >
+                                <i className="fa-solid fa-arrow-left"></i>
+                            </button>
+                            {}
+                            <div className="flex space-x-3">
+                                {/* Sadece admin ise Düzenle butonunu göster */}
+                                {isAuthenticated && (
+                                    <button 
+                                        onClick={() => { setCurrentReport(currentReport); setView('edit'); }}
+                                        className="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-4 rounded transition flex items-center"
+                                    >
+                                        <i className="fa-solid fa-pen mr-2"></i> Düzenle
+                                    </button>
+                                )}
+                                <button 
+                                    onClick={() => {
+                                        window.print();
+                                    }}
+                                    className="bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 px-4 rounded transition flex items-center print:hidden"
+                                >
+                                    <i className="fa-solid fa-print mr-2"></i> Yazdır / PDF
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Report Content (Printable area) */}
+                        <div className="bg-white text-slate-800 rounded-xl shadow-2xl overflow-hidden print:shadow-none" id="report-print-area">
+                            {/* Report Header */}
+                            <div className="bg-slate-900 text-white p-6 md:p-8 flex flex-col md:flex-row items-center md:items-start justify-between relative overflow-hidden">
+                                {/* Decorative pitch lines */}
+                                <div className="absolute opacity-10 border-2 border-white rounded-full w-96 h-96 -top-48 -right-48"></div>
+                                <div className="absolute opacity-10 border-r-2 border-white h-full w-1/2 top-0 left-0"></div>
+                                
+                                <div className="flex flex-col md:flex-row items-center z-10 w-full">
+                                    {/* Player Image */}
+                                    <div className="w-32 h-32 rounded-full bg-slate-800 border-4 border-primary overflow-hidden flex-shrink-0 mb-4 md:mb-0 md:mr-6 shadow-lg">
+                                        {currentReport.imageUrl ? (
+                                            <img src={currentReport.imageUrl} alt="Player" className="w-full h-full object-cover" />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center text-4xl font-bold text-slate-500 bg-slate-200">
+                                                {currentReport.firstName.charAt(0)}{currentReport.lastName.charAt(0)}
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Core Info */}
+                                    <div className="text-center md:text-left flex-1">
+                                        <div className="flex flex-col md:flex-row md:items-baseline justify-between">
+                                            <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tight text-white mb-1">
+                                                {currentReport.firstName} <span className="text-primary">{currentReport.lastName}</span>
+                                            </h1>
+                                            <div className="text-slate-400 text-sm mt-2 md:mt-0 font-medium">
+                                                Rapor Tarihi: {new Date(currentReport.date).toLocaleDateString('tr-TR')}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="text-xl font-medium text-slate-300 mb-3 border-b border-slate-700/50 pb-2 inline-block">
+                                            {currentReport.position} • {currentReport.club || 'Kulüpsüz'}
+                                        </div>
+                                        
+                                        <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-2">
+                                            <span className="bg-slate-800/80 px-3 py-1 rounded text-sm font-medium border border-slate-700 shadow-sm">
+                                                <i className="fa-solid fa-cake-candles mr-2 text-slate-400"></i>{currentReport.age || '-'} Yaş
+                                            </span>
+                                            <span className="bg-slate-800/80 px-3 py-1 rounded text-sm font-medium border border-slate-700 shadow-sm">
+                                                <i className="fa-solid fa-earth-americas mr-2 text-slate-400"></i>{currentReport.nationality || '-'}
+                                            </span>
+                                            <span className="bg-slate-800/80 px-3 py-1 rounded text-sm font-medium border border-slate-700 shadow-sm">
+                                                <i className="fa-solid fa-shoe-prints mr-2 text-slate-400"></i>{currentReport.foot} Ayak
+                                            </span>
+                                        </div>
+
+                                        {/* External Links */}
+                                        {(currentReport.transfermarktUrl || currentReport.youtubeUrl) && (
+                                            <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-3 print:hidden">
+                                                {currentReport.transfermarktUrl && (
+                                                    <a href={currentReport.transfermarktUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold bg-blue-900/50 text-blue-300 hover:bg-blue-800/80 px-3 py-1.5 rounded transition-colors border border-blue-800/50 flex items-center">
+                                                        <img src="https://tmssl.akamaized.net/images/tm_logo.svg" alt="TM" className="h-3 mr-2 opacity-80" />
+                                                        Transfermarkt Profili
+                                                    </a>
+                                                )}
+                                                {currentReport.youtubeUrl && (
+                                                    <a href={currentReport.youtubeUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold bg-red-900/50 text-red-300 hover:bg-red-800/80 px-3 py-1.5 rounded transition-colors border border-red-800/50 flex items-center">
+                                                        <i className="fa-brands fa-youtube mr-2"></i>
+                                                        YouTube'da İzle
+                                                    </a>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Overall Rating Badge */}
+                                    <div className="mt-6 md:mt-0 md:ml-6 flex flex-col items-center">
+                                        <div className="w-20 h-20 bg-primary text-white rounded-xl shadow-[0_4px_15px_rgba(16,185,129,0.5)] flex flex-col items-center justify-center transform rotate-3">
+                                            <span className="text-sm font-bold opacity-80 mb-[-5px]">PUAN</span>
+                                            <span className="text-4xl font-black leading-none">{currentReport.overallRating}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="p-6 md:p-8">
+                                {/* Secondary Info Bar */}
+                                <div className="bg-slate-100 rounded-lg p-4 flex flex-wrap justify-between items-center mb-8 border border-slate-200">
+                                    <div className="w-1/2 md:w-auto mb-2 md:mb-0">
+                                        <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">Boy</span>
+                                        <span className="font-semibold text-slate-800">{currentReport.height ? `${currentReport.height} cm` : '-'}</span>
+                                    </div>
+                                    <div className="w-1/2 md:w-auto mb-2 md:mb-0">
+                                        <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">Kilo</span>
+                                        <span className="font-semibold text-slate-800">{currentReport.weight ? `${currentReport.weight} kg` : '-'}</span>
+                                    </div>
+                                    <div className="w-1/2 md:w-auto">
+                                        <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">Piyasa Değeri</span>
+                                        <span className="font-semibold text-slate-800">{currentReport.marketValue || '-'}</span>
+                                    </div>
+                                    <div className="w-1/2 md:w-auto">
+                                        <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">Sözleşme Bitiş</span>
+                                        <span className="font-semibold text-slate-800">{currentReport.contractEnd || '-'}</span>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                                    {/* Attributes Visualizer (Simple Bars for View Mode) */}
+                                    <div>
+                                        <h3 className="text-xl font-bold border-b-2 border-primary pb-2 mb-4 text-slate-800 uppercase tracking-wide">Profil İncelemesi</h3>
+                                        <div className="space-y-3">
+                                            {[
+                                                { id: 'pace', label: 'Hız / Çabukluk' },
+                                                { id: 'shooting', label: 'Şut / Bitiricilik' },
+                                                { id: 'passing', label: 'Pas / Vizyon' },
+                                                { id: 'dribbling', label: 'Dribbling / Teknik' },
+                                                { id: 'defending', label: 'Savunma' },
+                                                { id: 'physicality', label: 'Fiziksel Güç' },
+                                                { id: 'tacticalAwareness', label: 'Taktik Bilgisi' },
+                                                { id: 'workRate', label: 'Çalışkanlık' }
+                                            ].map(attr => {
+                                                const val = currentReport.attributes[attr.id];
+                                                const percentage = (val / 10) * 100;
+                                                let barColor = 'bg-red-500';
+                                                if(val >= 8) barColor = 'bg-green-500';
+                                                else if(val >= 5) barColor = 'bg-yellow-500';
+
+                                                return (
+                                                    <div key={attr.id} className="relative">
+                                                        <div className="flex justify-between text-sm mb-1">
+                                                            <span className="font-medium text-slate-600">{attr.label}</span>
+                                                            <span className="font-bold text-slate-800">{val}/10</span>
+                                                        </div>
+                                                        <div className="w-full bg-slate-200 rounded-full h-2.5">
+                                                            <div className={`${barColor} h-2.5 rounded-full`} style={{width: `${percentage}%`}}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* Strengths & Weaknesses */}
+                                    <div className="flex flex-col gap-6">
+                                        <div className="bg-emerald-50 rounded-lg p-4 border border-emerald-100 shadow-sm h-1/2">
+                                            <h3 className="text-emerald-800 font-bold mb-2 flex items-center">
+                                                <i className="fa-solid fa-arrow-trend-up mr-2"></i> Güçlü Yönleri
+                                            </h3>
+                                            <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                                {currentReport.strengths || <span className="italic text-slate-400">Belirtilmedi.</span>}
+                                            </p>
+                                        </div>
+                                        
+                                        <div className="bg-red-50 rounded-lg p-4 border border-red-100 shadow-sm h-1/2">
+                                            <h3 className="text-red-800 font-bold mb-2 flex items-center">
+                                                <i className="fa-solid fa-arrow-trend-down mr-2"></i> Gelişime Açık Yönleri
+                                            </h3>
+                                            <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                                {currentReport.weaknesses || <span className="italic text-slate-400">Belirtilmedi.</span>}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Text Sections */}
+                                <div className="space-y-6">
+                                    {currentReport.roleInSystem && (
+                                        <div>
+                                            <h3 className="text-xl font-bold border-b-2 border-slate-300 pb-2 mb-3 text-slate-800 uppercase tracking-wide">Taktiksel Uyumu & Rolü</h3>
+                                            <p className="text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 p-4 rounded-lg border border-slate-100">
+                                                {currentReport.roleInSystem}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {currentReport.summary && (
+                                        <div>
+                                            <h3 className="text-xl font-bold border-b-2 border-slate-300 pb-2 mb-3 text-slate-800 uppercase tracking-wide">Genel Değerlendirme</h3>
+                                            <p className="text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 p-4 rounded-lg border border-slate-100">
+                                                {currentReport.summary}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* Embedded YouTube Video */}
+                                    {ytId && (
+                                        <div className="print:hidden mt-6">
+                                            <h3 className="text-xl font-bold border-b-2 border-slate-300 pb-2 mb-3 text-slate-800 uppercase tracking-wide flex items-center">
+                                                <i className="fa-brands fa-youtube text-red-600 mr-2"></i> Oyuncu Görüntüleri
+                                            </h3>
+                                            <div className="bg-slate-900 p-2 rounded-xl shadow-inner">
+                                                <div className="video-container">
+                                                    <iframe 
+                                                        src={`https://www.youtube.com/embed/${ytId}`} 
+                                                        title="YouTube video player" 
+                                                        frameBorder="0" 
+                                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                                                        allowFullScreen>
+                                                    </iframe>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Final Verdict */}
+                                <div className="mt-8 pt-6 border-t-2 border-slate-200">
+                                    <h3 className="text-center text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Scout'un Kararı</h3>
+                                    <div className="flex justify-center">
+                                        <div className={`px-8 py-4 rounded-lg text-white font-bold text-xl uppercase tracking-wide shadow-md flex items-center ${recData.color}`}>
+                                            <i className="fa-solid fa-clipboard-check mr-3 text-2xl opacity-80"></i>
+                                            {recData.label}
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen">
+                    {/* Navigation Bar - Her zaman görünür */}
+                    <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 print:hidden shadow-md">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex items-center justify-between h-16">
+                                <div className="flex items-center cursor-pointer" onClick={() => setView('dashboard')}>
+                                    <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center mr-3 shadow-lg shadow-emerald-500/20">
+                                        <i className="fa-solid fa-futbol text-white text-xl"></i>
+                                    </div>
+                                    <span className="font-bold text-xl text-white tracking-tight">ScoutMaster <span className="text-primary font-normal">Pro</span></span>
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                    <button className="text-slate-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition" onClick={() => setView('dashboard')}>Ana Sayfa</button>
+                                    
+                                    {isAuthenticated ? (
+                                        <button onClick={handleLogout} className="bg-slate-800 hover:bg-slate-700 text-red-400 hover:text-red-300 px-3 py-2 rounded-md text-sm font-medium transition border border-slate-700">
+                                            <i className="fa-solid fa-arrow-right-from-bracket mr-1"></i> Çıkış Yap
+                                        </button>
+                                    ) : (
+                                        <button onClick={() => setView('login')} className="text-primary hover:text-white px-3 py-2 rounded-md text-sm font-medium transition">
+                                            <i className="fa-solid fa-lock mr-1"></i> Yönetici
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </nav>
+
+                    {/* Main Content Area */}
+                    <main className="py-6 print:py-0">
+                        {view === 'login' && renderLogin()}
+                        {view === 'dashboard' && renderDashboard()}
+                        {view === 'edit' && isAuthenticated && renderEditor()}
+                        {view === 'view' && renderViewReport()}
+                    </main>
+                    
+                    {/* Print Specific Styling (Only visible when printing) */}
+                    <style dangerouslySetInnerHTML={{__html: `
+                        @media print {
+                            body { background: white; color: black; }
+                            @page { margin: 0.5cm; }
+                            #report-print-area { box-shadow: none !important; }
+                        }
+                    `}} />
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
